@@ -3,9 +3,11 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"strings"
 
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,6 +18,64 @@ const (
 	formatJSON    outputFormat = "json"
 	formatYAML    outputFormat = "yaml"
 )
+
+// ANSI color codes for terminal output
+const (
+	colorReset  = "\033[0m"
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorBlue   = "\033[34m"
+	colorPurple = "\033[35m"
+	colorCyan   = "\033[36m"
+	colorWhite  = "\033[37m"
+	colorGray   = "\033[90m"
+)
+
+// Color palette for context names - using bright colors for better visibility
+var contextColors = []string{
+	"\033[91m", // Bright Red
+	"\033[92m", // Bright Green
+	"\033[93m", // Bright Yellow
+	"\033[94m", // Bright Blue
+	"\033[95m", // Bright Magenta
+	"\033[96m", // Bright Cyan
+	"\033[97m", // Bright White
+	"\033[31m", // Red
+	"\033[32m", // Green
+	"\033[33m", // Yellow
+	"\033[34m", // Blue
+	"\033[35m", // Magenta
+	"\033[36m", // Cyan
+}
+
+// isTerminal checks if stdout is a terminal
+func isTerminal() bool {
+	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// getContextColor returns a consistent color for a given context name
+func getContextColor(context string) string {
+	if !isTerminal() {
+		return "" // No colors when piping to files
+	}
+
+	// Use hash of context name to consistently assign colors
+	hash := fnv.New32a()
+	hash.Write([]byte(context))
+	hashValue := hash.Sum32()
+
+	return contextColors[hashValue%uint32(len(contextColors))]
+}
+
+// colorizeContext returns a colored version of the context name
+func colorizeContext(context string) string {
+	color := getContextColor(context)
+	if color == "" {
+		return context
+	}
+	return color + context + colorReset
+}
 
 func detectOutputFormat(args []string) outputFormat {
 	for i, arg := range args {
@@ -112,7 +172,8 @@ func formatDefaultOutput(results []contextResult) error {
 	// Print all outputs
 	for _, data := range allOutputs {
 		if data.err != nil {
-			fmt.Fprintf(os.Stderr, "Context %s: Error: %v\n", data.context, data.err)
+			coloredContext := colorizeContext(data.context)
+			fmt.Fprintf(os.Stderr, "Context %s: Error: %v\n", coloredContext, data.err)
 			if data.errMsg != "" {
 				fmt.Fprintf(os.Stderr, "Output: %s\n", data.errMsg)
 			}
@@ -124,6 +185,7 @@ func formatDefaultOutput(results []contextResult) error {
 			startIdx = 1 // Skip header line
 		}
 
+		coloredContext := colorizeContext(data.context)
 		contextPadding := strings.Repeat(" ", maxContextWidth-len(data.context))
 
 		for i := startIdx; i < len(data.lines); i++ {
@@ -131,7 +193,7 @@ func formatDefaultOutput(results []contextResult) error {
 			if line == "" {
 				continue
 			}
-			fmt.Printf("%s%s  %s\n", data.context, contextPadding, line)
+			fmt.Printf("%s%s  %s\n", coloredContext, contextPadding, line)
 		}
 	}
 
@@ -239,7 +301,14 @@ func formatVersionOutput(results []contextResult) error {
 	// Print table rows
 	for _, result := range results {
 		info := versionData[result.context]
-		fmt.Printf("%-30s  %s\n", result.context, info.serverVersion)
+		coloredContext := colorizeContext(result.context)
+		// Calculate padding based on actual context length (without ANSI codes)
+		contextLen := len(result.context)
+		padding := ""
+		if contextLen < 30 {
+			padding = strings.Repeat(" ", 30-contextLen)
+		}
+		fmt.Printf("%s%s  %s\n", coloredContext, padding, info.serverVersion)
 	}
 
 	return nil
